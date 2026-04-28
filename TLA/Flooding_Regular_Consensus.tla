@@ -4,6 +4,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
     PROCS,
     PROPOSED_VAL,
+    CRASHERS,
     
     \* used as type in network messages
     PROPOSE,
@@ -81,6 +82,7 @@ Deliver_proposal ==
 Crash == 
     \E goner \in PROCS :
         /\ goner \notin crashed
+        /\ goner \in CRASHERS
         /\ crashed' = crashed \union {goner}
         /\ network' = {msg \in network : msg.src /= goner}
         /\ UNCHANGED<<correct, round, decision, proposals, received_from, has_proposed>>
@@ -201,5 +203,5 @@ Termination ==
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Apr 24 11:22:51 CEST 2026 by floyd
+\* Last modified Tue Apr 28 13:06:32 CEST 2026 by floyd
 \* Created Fri Apr 24 09:04:30 CEST 2026 by floyd
