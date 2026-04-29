@@ -5,6 +5,7 @@ CONSTANTS
     PROCS,
     PROPOSED_VAL,
     CRASHERS,       \* Set of processes that can crash (to reduce state space)
+    INIT_CRASHERS,  \* Set of processes that crash immedatly wihtout donig anything (for 5 process scenario)
     
     \* used as type in network messages
     PROPOSE,
@@ -33,13 +34,13 @@ vars == <<correct, round, decision, proposals, received_from, network, crashed, 
 \* Initial State
 \*---------------------------------------------------------------------------
 Init ==
-    /\ correct       = [p \in PROCS |-> PROCS]
+    /\ correct       = [p \in PROCS |-> PROCS \ INIT_CRASHERS]
     /\ round         = [p \in PROCS |-> 1]
     /\ decision      = [p \in PROCS |-> 0]
     /\ proposals     = [p \in PROCS |-> [r \in Round |-> {}]]
     /\ received_from = [p \in PROCS |-> [r \in Round |-> IF r = 0 THEN PROCS ELSE {}]]
     /\ network       = {}
-    /\ crashed       = {}
+    /\ crashed       = INIT_CRASHERS
     /\ has_proposed  = [p \in PROCS |-> FALSE]
     
 \*----------------------------------------------------------------------------
@@ -203,5 +204,5 @@ Termination ==
 
 =============================================================================
 \* Modification History
-\* Last modified Wed Apr 29 09:33:04 CEST 2026 by floyd
+\* Last modified Wed Apr 29 09:35:03 CEST 2026 by floyd
 \* Created Fri Apr 24 09:04:30 CEST 2026 by floyd
