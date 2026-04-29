@@ -200,8 +200,23 @@ Termination ==
     \A p \in PROCS :
         p \notin crashed ~> (decision[p] /= 0 \/ p \in crashed)
 
+\*----------------------------------------------------------------------------
+\* Additional Liveness Properties for BEB and PFD
+\*----------------------------------------------------------------------------
+Validity_BEB ==
+    \A sender \in PROCS, r \in Round :
+        ([](sender \notin crashed /\ \E msg \in network : msg.src = sender /\ msg.round = r))
+        ~> 
+        (\A target \in PROCS : 
+            \/ target \in crashed 
+            \/ (sender \in received_from[target][r])
+            \/ (decision[target] /= 0))
+            
+Strong_completeness_PFD ==
+    \A p, q \in PROCS :
+        (p \in crashed) ~> (p \notin correct[q] \/ q \in crashed)
 
 =============================================================================
 \* Modification History
-\* Last modified Wed Apr 29 09:33:04 CEST 2026 by floyd
+\* Last modified Wed Apr 29 10:05:08 CEST 2026 by floyd
 \* Created Fri Apr 24 09:04:30 CEST 2026 by floyd
