@@ -4,7 +4,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS
     PROCS,
     PROPOSED_VAL,
-    CRASHERS,
+    CRASHERS,       \* Set of processes that can crash (to reduce state space)
     
     \* used as type in network messages
     PROPOSE,
@@ -203,5 +203,5 @@ Termination ==
 
 =============================================================================
 \* Modification History
-\* Last modified Tue Apr 28 13:06:32 CEST 2026 by floyd
+\* Last modified Wed Apr 29 09:33:04 CEST 2026 by floyd
 \* Created Fri Apr 24 09:04:30 CEST 2026 by floyd
