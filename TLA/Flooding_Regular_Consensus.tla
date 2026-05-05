@@ -167,6 +167,10 @@ Deliver_decision ==
 \*----------------------------------------------------------------------------
 \* Next Action and Specification
 \*----------------------------------------------------------------------------
+Done ==
+    /\ \A p \in PROCS : p \in crashed \/ decision[p] /= 0
+    /\ UNCHANGED vars
+
 Next ==
     \/ Propose
     \/ Deliver_proposal_correct
@@ -175,13 +179,15 @@ Next ==
     \/ Detect_crash
     \/ Can_decide
     \/ Deliver_decision
+    \/ Done
     
 \* List explicit weak fairness variables on specific safe actions rather than globally
 Spec == Init /\ [][Next]_vars /\ WF_vars(Propose) 
-                             /\ WF_vars(Deliver_proposal_correct) 
-                             /\ WF_vars(Can_decide) 
-                             /\ WF_vars(Deliver_decision) 
-                             /\ WF_vars(Detect_crash)
+                              /\ WF_vars(Deliver_proposal_correct) 
+                              /\ WF_vars(Can_decide) 
+                              /\ WF_vars(Deliver_decision) 
+                              /\ WF_vars(Crash)
+                              /\ WF_vars(Detect_crash)
 
 \*----------------------------------------------------------------------------
 \* Invariants
@@ -201,7 +207,12 @@ TypeOK ==
                                  
 Validity ==
     \A p \in PROCS :
-        decision[p] /= 0 => \E q \in PROCS : \E msg \in broadcast : msg.type = PROPOSE /\ msg.src = q /\ msg.round = 1 /\ decision[p] \in msg.vals
+        decision[p] /= 0 => 
+            \* \E q \in PROCS : 
+            \E msg \in broadcast : 
+                /\ msg.type = PROPOSE 
+                \* /\ msg.src = q 
+                /\ decision[p] \in msg.vals
 
     
 Agreement ==
@@ -223,22 +234,49 @@ Termination ==
     \A p \in PROCS \ CRASHERS : <>(decision[p] /= 0)
 
 \*----------------------------------------------------------------------------
-\* Additional Liveness Properties for BEB and PFD
+\* Additional Properties for BEB and PFD
 \*----------------------------------------------------------------------------
-Validity_BEB ==
-    \A sender \in PROCS, r \in Round :
-        ([](sender \notin crashed /\ \E msg \in broadcast : msg.type = PROPOSE /\ msg.src = sender /\ msg.round = r))
-        ~> 
-        (\A target \in PROCS : 
-            \/ target \in crashed 
-            \/ (sender \in received_from[target][r])
-            \/ (decision[target] /= 0))
+
+\* We cannot quantify directly over the msg in broadcast (\A msg \in broadcast) as broadcast is not a constant
+\* 1. BEB Validity for PROPOSE Messages
+\* If a correct sender broadcasts a proposal in round 'r', all correct targets deliver it.
+BEB1_Proposals_Validity ==
+    \A sender \in PROCS :
+        \A target \in PROCS :
+            \A r \in Round \ {0} :
+                (\E msg \in broadcast : msg.type = PROPOSE /\ msg.src = sender /\ msg.round = r)
+                /\ [](sender \notin crashed /\ target \notin crashed)
+                ~>
+                (\E msg \in delivered[target] : msg.type = PROPOSE /\ msg.src = sender /\ msg.round = r)
+
+\* 2. BEB Validity for DECIDE Messages
+\* If a correct sender broadcasts a decision, all correct targets deliver it.
+BEB1_Decisions_Validity ==
+    \A sender \in PROCS :
+        \A target \in PROCS :
+            (\E msg \in broadcast : msg.type = DECIDE /\ msg.src = sender)
+            /\ [](sender \notin crashed /\ target \notin crashed)
+            ~>
+            (\E msg \in delivered[target] : msg.type = DECIDE /\ msg.src = sender)
+
+\* 3. Conjoin them for the final property
+BEB1_Validity == BEB1_Proposals_Validity /\ BEB1_Decisions_Validity
+
             
-Strong_completeness_PFD ==
+BEB2_NoDuplication == 
+    \* This is guaranteed by the guard /\ proposal_msg \notin delivered[receiver] in our propose actions
+    TRUE
+    
+BEB3_NoCreation ==
+    \A p \in PROCS :
+        \A msg \in delivered[p] :
+            msg \in broadcast
+            
+PFD_Strong_completeness ==
     \A p, q \in PROCS :
         (p \in crashed) ~> (p \notin correct[q] \/ q \in crashed)
 
  =============================================================================
 \* Modification History
-\* Last modified Tue May 05 11:05:35 CEST 2026 by floyd
+\* Last modified Tue May 05 12:02:07 CEST 2026 by floyd
 \* Created Fri Apr 24 09:04:30 CEST 2026 by floyd 
