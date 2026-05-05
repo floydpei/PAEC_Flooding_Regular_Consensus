@@ -3,8 +3,8 @@ EXTENDS Naturals, FiniteSets
 
 CONSTANTS
     PROCS,
-    PROPOSED_VAL,
     CRASHERS,       \* Set of processes that can crash (to reduce state space)
+    PROPOSED_VAL,
     
     \* used as type in network messages
     PROPOSE,
@@ -12,6 +12,7 @@ CONSTANTS
     
 N_PROCS == Cardinality(PROCS)
 Round == 0..N_PROCS
+VALUES == 1..N_PROCS
 SetMax(S) == CHOOSE v \in S : \A w \in S : w <= v
 
 VARIABLES
@@ -21,13 +22,13 @@ VARIABLES
     decision,       \* [PROCS -> Nat]                        0 = undecided
     proposals,      \* [PROCS -> [Round -> SUBSET Nat]]
     received_from,  \* [PROCS -> [Round -> SUBSET PROCS]]
-    has_proposed,   \* [PROCS -> Boolean]                    to ensure a process can only propose once
+    delivered,      \* [PROCS -> SUBSET [type: {PROPOSE, DECIDE}, src: PROCS, round: Round, vals: SUBSET Nat]]
     
     \* Shared
-    network,        \* Each record: [ type: proposal/decided; src : Proc; round : Nat; vals : SUBSET Nat ]
-    crashed        \* crashed processes that can be detected by the correct ones
+    broadcast,      \* Each record: [ type: proposal/decided; src : Proc; round : Nat; vals : SUBSET Nat ]
+    crashed         \* crashed processes that can be detected by the correct ones
     
-vars == <<correct, round, decision, proposals, received_from, network, crashed, has_proposed>>
+vars == <<correct, round, decision, proposals, received_from, delivered, broadcast, crashed>>
 
 \*----------------------------------------------------------------------------
 \* Initial State
@@ -38,54 +39,70 @@ Init ==
     /\ decision      = [p \in PROCS |-> 0]
     /\ proposals     = [p \in PROCS |-> [r \in Round |-> {}]]
     /\ received_from = [p \in PROCS |-> [r \in Round |-> IF r = 0 THEN PROCS ELSE {}]]
-    /\ network       = {}
+    /\ delivered     = [p \in PROCS |-> {}]
+    /\ broadcast     = {}
     /\ crashed       = {}
-    /\ has_proposed  = [p \in PROCS |-> FALSE]
     
 \*----------------------------------------------------------------------------
 \* Proposing Actions
 \*---------------------------------------------------------------------------
 Propose ==
     \E proposer \in PROCS :
+    \*\E v \in VALUES :
         /\ proposer \notin crashed
-        /\ ~has_proposed[proposer]
+        \* Check if proposer has already broadcasted its proposal
+        /\ ~\E msg \in broadcast : msg.type = PROPOSE /\ msg.src = proposer \* /\ msg.round = 1
         /\ round[proposer] = 1
-        /\ LET new_proposals == proposals[proposer][1] \union {PROPOSED_VAL[proposer]}
-           IN
-            /\ proposals' = [proposals EXCEPT ![proposer][1] = new_proposals]
-            /\ network' = network \union 
-                                        {
-                                        [type   |-> PROPOSE,
-                                         src    |-> proposer,
-                                         round  |-> 1,
-                                         vals   |-> new_proposals]
-                                        }
-            /\ received_from' = [received_from EXCEPT ![proposer][1] = received_from[proposer][1] \union {proposer}]
-            /\ has_proposed' = [has_proposed EXCEPT ![proposer] = TRUE]
-            /\ UNCHANGED<<correct, round, decision, crashed>>
+        /\  LET new_proposals == proposals[proposer][1] \union {PROPOSED_VAL[proposer]}
+        \*/\  LET new_proposals == proposals[proposer][1] \union {v}
+            IN
+                /\ proposals' = [proposals EXCEPT ![proposer][1] = new_proposals]
+                /\ broadcast' = broadcast \union 
+                                            {
+                                            [type   |-> PROPOSE,
+                                             src    |-> proposer,
+                                             round  |-> 1,
+                                             vals   |-> new_proposals]
+                                            }
+                /\ UNCHANGED<<correct, round, decision, received_from, delivered, crashed>>
             
-Deliver_proposal ==
-    \E proposal_msg \in network :
+Deliver_proposal_correct ==
+    \E proposal_msg \in broadcast :
     \E receiver \in PROCS :
         /\ receiver \notin crashed
-        /\ round[receiver] = proposal_msg.round
-        /\ proposal_msg.src \notin received_from[receiver][proposal_msg.round]
+        /\ proposal_msg.src \notin crashed  \* Sender must be correct for weak fairness context
+        /\ proposal_msg.src \notin received_from[receiver][proposal_msg.round]  \* Keep to reduce model checking time
         /\ proposal_msg.type = PROPOSE
+        /\ proposal_msg \notin delivered[receiver] \* Enforce BEB2: No duplication
         /\ proposals' = [proposals EXCEPT ![receiver][proposal_msg.round] = proposals[receiver][proposal_msg.round] \union proposal_msg.vals]
         /\ received_from' = [received_from EXCEPT ![receiver][proposal_msg.round] = received_from[receiver][proposal_msg.round] \union {proposal_msg.src}]
-        /\ UNCHANGED<<correct, round, decision, network, crashed, has_proposed>>
+        /\ delivered' = [delivered EXCEPT ![receiver] = delivered[receiver] \union {proposal_msg}]
+        /\ UNCHANGED<<correct, round, decision, broadcast, crashed>>
+
+Deliver_proposal_faulty ==
+    \E proposal_msg \in broadcast :
+    \E receiver \in PROCS :
+        /\ receiver \notin crashed
+        /\ proposal_msg.src \in crashed   \* Arbitrary scenario where sender crashed
+        /\ proposal_msg.src \notin received_from[receiver][proposal_msg.round]  \* Keep to reduce model checking time
+        /\ proposal_msg.type = PROPOSE
+        /\ proposal_msg \notin delivered[receiver]
+        /\ proposals' = [proposals EXCEPT ![receiver][proposal_msg.round] = proposals[receiver][proposal_msg.round] \union proposal_msg.vals]
+        /\ received_from' = [received_from EXCEPT ![receiver][proposal_msg.round] = received_from[receiver][proposal_msg.round] \union {proposal_msg.src}]
+        /\ delivered' = [delivered EXCEPT ![receiver] = delivered[receiver] \union {proposal_msg}]
+        /\ UNCHANGED<<correct, round, decision, broadcast, crashed>>
         
         
 \*----------------------------------------------------------------------------
 \* Crashing Actions
 \*---------------------------------------------------------------------------
 Crash == 
-    \E goner \in PROCS :
+    \E goner \in CRASHERS :
         /\ goner \notin crashed
-        /\ goner \in CRASHERS
         /\ crashed' = crashed \union {goner}
-        /\ network' = {msg \in network : msg.src /= goner}
-        /\ UNCHANGED<<correct, round, decision, proposals, received_from, has_proposed>>
+        \* Messages from failed processes are no longer removed from the broadcast set
+        \*/\ broadcast' = {msg \in broadcast : msg.src /= goner}
+        /\ UNCHANGED<<correct, round, decision, proposals, received_from, delivered, broadcast>>
         
 Detect_crash ==
     \E detector \in PROCS :
@@ -94,7 +111,7 @@ Detect_crash ==
         /\ dead \in crashed
         /\ dead \in correct[detector]
         /\ correct' = [correct EXCEPT ![detector] = correct[detector] \ {dead}]
-        /\ UNCHANGED<<round, decision, proposals, received_from, network, crashed, has_proposed>>
+        /\ UNCHANGED<<round, decision, proposals, received_from, delivered, broadcast, crashed>>
         
         
 \*----------------------------------------------------------------------------
@@ -108,43 +125,43 @@ Can_decide ==
         /\ IF received_from[decider][round[decider]] = received_from[decider][round[decider] - 1]
             THEN LET decided_val == SetMax(proposals[decider][round[decider]])
                     IN
-                    /\ network' = network \cup {
+                    /\ broadcast' = broadcast \cup {
                            [type  |-> DECIDE,
                             src   |-> decider,
                             round |-> round[decider],
                             vals  |-> {decided_val}]
                             }
                     /\ decision' = [decision EXCEPT ![decider] = decided_val]
-                    /\ UNCHANGED <<correct, round, proposals, received_from, crashed, has_proposed>>
+                    /\ UNCHANGED <<correct, round, proposals, received_from, delivered, crashed>>
             ELSE
             /\ round[decider] < N_PROCS
             /\ round' = [round EXCEPT ![decider] = round[decider] + 1 ]
-            /\ network' = network \union 
+            /\ broadcast' = broadcast \union 
                                         {
                                         [type   |-> PROPOSE,
                                          src    |-> decider,
                                          round  |-> round[decider] + 1,
                                          vals   |-> proposals[decider][round[decider]] ]
                                         }
-            /\ UNCHANGED<<correct, decision, proposals, received_from, crashed, has_proposed>>
+            /\ UNCHANGED<<correct, decision, proposals, received_from, delivered, crashed>>
             
 Deliver_decision ==
     \E receiver \in PROCS :
-    \E msg \in network:
+    \E msg \in broadcast:
         /\ receiver \notin crashed
         /\ msg.type = DECIDE
         /\ msg.src \in correct[receiver]
         /\ decision[receiver] = 0
         /\ LET decided_val == CHOOSE x \in msg.vals : TRUE       \* Extract the single value from the set
            IN
-             /\ network' = network \cup {
+             /\ broadcast' = broadcast \cup {
                        [type  |-> DECIDE,
                         src   |-> receiver,
                         round |-> round[receiver],
                         vals  |-> {decided_val}]
                         }
              /\ decision' = [decision EXCEPT ![receiver] = decided_val]
-             /\ UNCHANGED<<correct, round, proposals, received_from, crashed, has_proposed>>
+             /\ UNCHANGED<<correct, round, proposals, received_from, delivered, crashed>>
         
         
 \*----------------------------------------------------------------------------
@@ -152,17 +169,23 @@ Deliver_decision ==
 \*----------------------------------------------------------------------------
 Next ==
     \/ Propose
-    \/ Deliver_proposal
+    \/ Deliver_proposal_correct
+    \/ Deliver_proposal_faulty
     \/ Crash
     \/ Detect_crash
     \/ Can_decide
     \/ Deliver_decision
     
-Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
+\* List explicit weak fairness variables on specific safe actions rather than globally
+Spec == Init /\ [][Next]_vars /\ WF_vars(Propose) 
+                             /\ WF_vars(Deliver_proposal_correct) 
+                             /\ WF_vars(Can_decide) 
+                             /\ WF_vars(Deliver_decision) 
+                             /\ WF_vars(Detect_crash)
 
 \*----------------------------------------------------------------------------
 \* Invariants
-\*----------------------------------------------------------------------------
+\*---------------------------------------------------------------------------
 TypeOK ==
     /\ correct       \in [PROCS -> SUBSET PROCS]
     /\ round         \in [PROCS -> Round]
@@ -170,15 +193,15 @@ TypeOK ==
     /\ proposals     \in [PROCS -> [Round -> SUBSET Nat]]
     /\ received_from \in [PROCS -> [Round -> SUBSET PROCS]]
     /\ crashed       \in SUBSET PROCS
-    /\ network       \in SUBSET [type      : {PROPOSE, DECIDE},
+    /\ delivered     \in [PROCS -> SUBSET [type: {PROPOSE, DECIDE}, src: PROCS, round: Round, vals: SUBSET Nat]]
+    /\ broadcast     \in SUBSET [type      : {PROPOSE, DECIDE},
                                  src       : PROCS,
                                  round     : Round,
                                  vals      : SUBSET Nat]
-    /\ has_proposed  \in [PROCS -> BOOLEAN]
                                  
 Validity ==
     \A p \in PROCS :
-        decision[p] /= 0 => \E q \in PROCS : decision[p] = PROPOSED_VAL[q]
+        decision[p] /= 0 => \E q \in PROCS : \E msg \in broadcast : msg.type = PROPOSE /\ msg.src = q /\ msg.round = 1 /\ decision[p] \in msg.vals
 
     
 Agreement ==
@@ -197,15 +220,14 @@ Integrity ==
     
     
 Termination ==
-    \A p \in PROCS :
-        p \notin crashed ~> (decision[p] /= 0 \/ p \in crashed)
+    \A p \in PROCS \ CRASHERS : <>(decision[p] /= 0)
 
 \*----------------------------------------------------------------------------
 \* Additional Liveness Properties for BEB and PFD
 \*----------------------------------------------------------------------------
 Validity_BEB ==
     \A sender \in PROCS, r \in Round :
-        ([](sender \notin crashed /\ \E msg \in network : msg.src = sender /\ msg.round = r))
+        ([](sender \notin crashed /\ \E msg \in broadcast : msg.type = PROPOSE /\ msg.src = sender /\ msg.round = r))
         ~> 
         (\A target \in PROCS : 
             \/ target \in crashed 
@@ -216,7 +238,7 @@ Strong_completeness_PFD ==
     \A p, q \in PROCS :
         (p \in crashed) ~> (p \notin correct[q] \/ q \in crashed)
 
-=============================================================================
+ =============================================================================
 \* Modification History
-\* Last modified Wed Apr 29 10:05:08 CEST 2026 by floyd
-\* Created Fri Apr 24 09:04:30 CEST 2026 by floyd
+\* Last modified Tue May 05 11:05:35 CEST 2026 by floyd
+\* Created Fri Apr 24 09:04:30 CEST 2026 by floyd 
