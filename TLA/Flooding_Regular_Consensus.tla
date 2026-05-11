@@ -8,12 +8,18 @@ CONSTANTS
     
     \* used as type in network messages
     PROPOSE,
-    DECIDE
+    DECIDE,
+    
+    \* for explicit scenario
+    p1,
+    p2,
+    p3,
+    p4
     
 N_PROCS == Cardinality(PROCS)
 Round == 0..N_PROCS
 VALUES == 1..N_PROCS
-SetMax(S) == CHOOSE v \in S : \A w \in S : w <= v
+SetMin(S) == CHOOSE v \in S : \A w \in S : w >= v
 
 VARIABLES
     \* Per process local states
@@ -26,9 +32,11 @@ VARIABLES
     
     \* Shared
     broadcast,      \* Each record: [ type: proposal/decided; src : Proc; round : Nat; vals : SUBSET Nat ]
-    crashed         \* crashed processes that can be detected by the correct ones
+    crashed,         \* crashed processes that can be detected by the correct ones
     
-vars == <<correct, round, decision, proposals, received_from, delivered, broadcast, crashed>>
+    step_index
+    
+vars == <<correct, round, decision, proposals, received_from, delivered, broadcast, crashed, step_index>>
 
 \*----------------------------------------------------------------------------
 \* Initial State
@@ -42,6 +50,7 @@ Init ==
     /\ delivered     = [p \in PROCS |-> {}]
     /\ broadcast     = {}
     /\ crashed       = {}
+    /\ step_index    = 1
     
 \*----------------------------------------------------------------------------
 \* Proposing Actions
@@ -64,6 +73,7 @@ Propose ==
                                              round  |-> 1,
                                              vals   |-> new_proposals]
                                             }
+                /\ step_index' = step_index + 1
                 /\ UNCHANGED<<correct, round, decision, received_from, delivered, crashed>>
             
 Deliver_proposal_correct ==
@@ -71,12 +81,13 @@ Deliver_proposal_correct ==
     \E receiver \in PROCS :
         /\ receiver \notin crashed
         /\ proposal_msg.src \notin crashed  \* Sender must be correct for weak fairness context
-        /\ proposal_msg.src \notin received_from[receiver][proposal_msg.round]  \* Keep to reduce model checking time
+        \*/\ proposal_msg.src \notin received_from[receiver][proposal_msg.round]  \* Keep to reduce model checking time
         /\ proposal_msg.type = PROPOSE
         /\ proposal_msg \notin delivered[receiver] \* Enforce BEB2: No duplication
         /\ proposals' = [proposals EXCEPT ![receiver][proposal_msg.round] = proposals[receiver][proposal_msg.round] \union proposal_msg.vals]
         /\ received_from' = [received_from EXCEPT ![receiver][proposal_msg.round] = received_from[receiver][proposal_msg.round] \union {proposal_msg.src}]
         /\ delivered' = [delivered EXCEPT ![receiver] = delivered[receiver] \union {proposal_msg}]
+        /\ step_index' = step_index + 1
         /\ UNCHANGED<<correct, round, decision, broadcast, crashed>>
 
 Deliver_proposal_faulty ==
@@ -90,6 +101,7 @@ Deliver_proposal_faulty ==
         /\ proposals' = [proposals EXCEPT ![receiver][proposal_msg.round] = proposals[receiver][proposal_msg.round] \union proposal_msg.vals]
         /\ received_from' = [received_from EXCEPT ![receiver][proposal_msg.round] = received_from[receiver][proposal_msg.round] \union {proposal_msg.src}]
         /\ delivered' = [delivered EXCEPT ![receiver] = delivered[receiver] \union {proposal_msg}]
+        /\ step_index' = step_index + 1
         /\ UNCHANGED<<correct, round, decision, broadcast, crashed>>
         
         
@@ -102,6 +114,7 @@ Crash ==
         /\ crashed' = crashed \union {goner}
         \* Messages from failed processes are no longer removed from the broadcast set
         \*/\ broadcast' = {msg \in broadcast : msg.src /= goner}
+        /\ step_index' = step_index + 1
         /\ UNCHANGED<<correct, round, decision, proposals, received_from, delivered, broadcast>>
         
 Detect_crash ==
@@ -111,6 +124,7 @@ Detect_crash ==
         /\ dead \in crashed
         /\ dead \in correct[detector]
         /\ correct' = [correct EXCEPT ![detector] = correct[detector] \ {dead}]
+        /\ step_index' = step_index + 1
         /\ UNCHANGED<<round, decision, proposals, received_from, delivered, broadcast, crashed>>
         
         
@@ -123,7 +137,7 @@ Can_decide ==
         /\ decision[decider] = 0
         /\ correct[decider] \subseteq received_from[decider][round[decider]]
         /\ IF received_from[decider][round[decider]] = received_from[decider][round[decider] - 1]
-            THEN LET decided_val == SetMax(proposals[decider][round[decider]])
+            THEN LET decided_val == SetMin(proposals[decider][round[decider]])
                     IN
                     /\ broadcast' = broadcast \cup {
                            [type  |-> DECIDE,
@@ -132,6 +146,7 @@ Can_decide ==
                             vals  |-> {decided_val}]
                             }
                     /\ decision' = [decision EXCEPT ![decider] = decided_val]
+                    /\ step_index' = step_index + 1
                     /\ UNCHANGED <<correct, round, proposals, received_from, delivered, crashed>>
             ELSE
             /\ round[decider] < N_PROCS
@@ -143,6 +158,7 @@ Can_decide ==
                                          round  |-> round[decider] + 1,
                                          vals   |-> proposals[decider][round[decider]] ]
                                         }
+            /\ step_index' = step_index + 1
             /\ UNCHANGED<<correct, decision, proposals, received_from, delivered, crashed>>
             
 Deliver_decision ==
@@ -161,9 +177,150 @@ Deliver_decision ==
                         vals  |-> {decided_val}]
                         }
              /\ decision' = [decision EXCEPT ![receiver] = decided_val]
+             /\ step_index' = step_index + 1
              /\ UNCHANGED<<correct, round, proposals, received_from, delivered, crashed>>
         
+\*----------------------------------------------------------------------------
+\* Bug Scenario Description
+\*----------------------------------------------------------------------------
+\* Somehow needed to make TLC actually increment the step_index
+KeepVars(Action) == 
+    /\ Action
+    /\ step_index' = step_index + 1
+    
+Exec ==
+    /\  \/ 
+            /\ step_index = 1
+            /\ KeepVars(Propose)
+            /\ \E msg \in broadcast' : msg.type = PROPOSE /\ msg.src = p1
+           
+        \/ 
+            /\ step_index = 2
+            /\ KeepVars(Propose)
+            /\ \E msg \in broadcast' : msg.type = PROPOSE /\ msg.src = p2
+            
+        \/ 
+            /\ step_index = 3
+            /\ KeepVars(Propose)
+            /\ \E msg \in broadcast' : msg.type = PROPOSE /\ msg.src = p3
+          
+        \/ 
+            /\ step_index = 4
+            /\ KeepVars(Propose)
+            /\ \E msg \in broadcast' : msg.type = PROPOSE /\ msg.src = p4
+            
+       \/ 
+            /\ step_index = 5
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p1 \in received_from'[p2][1]
+       \/ 
+            /\ step_index = 6
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p2 \in received_from'[p2][1]
+       \/ 
+            /\ step_index = 7
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p3 \in received_from'[p2][1]
+       \/ 
+            /\ step_index = 8
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p4 \in received_from'[p2][1]
+            
+      \/ 
+            /\ step_index = 9
+            /\ KeepVars(Crash)
+            /\ p1 \in crashed'
+           
+            
+      \/ 
+            /\ step_index = 10
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p2 \in received_from'[p3][1]            
+      \/ 
+            /\ step_index = 11
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p4 \in received_from'[p3][1]
+          
+      \/ 
+            /\ step_index = 12
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p3 \in received_from'[p4][1]
+            
+      \/ 
+            /\ step_index = 13
+            /\ KeepVars(Detect_crash)
+            /\ p1 \notin correct'[p2]
+      \/ 
+            /\ step_index = 14
+            /\ KeepVars(Detect_crash)
+            /\ p1 \notin correct'[p3]
+      \/ 
+            /\ step_index = 15
+            /\ KeepVars(Detect_crash)
+            /\ p1 \notin correct'[p4]
+            
+      \/ 
+            /\ step_index = 16
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p3 \in received_from'[p3][1]
+            
+      \/
+            /\ step_index = 17
+            /\ KeepVars(Can_decide)
+            /\ decision'[p2] /= 0
+            
+      \/
+            /\ step_index = 18
+            /\ KeepVars(Can_decide)
+            /\ round'[p3] = 2
+            
+            
+      \/
+            /\ step_index = 19
+            /\ KeepVars(Crash)
+            /\ p2 \in crashed'
+           
         
+      \/ 
+            /\ step_index = 20
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p3 \in received_from'[p4][2]  
+            
+      \/
+            /\ step_index = 21
+            /\ KeepVars(Deliver_decision)
+            /\ decision'[p3] /= 0  
+            
+      \/ 
+            /\ step_index = 22
+            /\ KeepVars(Detect_crash)
+            /\ p2 \notin correct'[p4]
+            
+     \/ 
+            /\ step_index = 23
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p4 \in received_from'[p4][1]
+       
+      \/
+            /\ step_index = 24
+            /\ KeepVars(Can_decide)
+            /\ round'[p4] = 2
+            
+      \/ 
+            /\ step_index = 25
+            /\ KeepVars(Deliver_proposal_correct)
+            /\ p4 \in received_from'[p4][2]
+      \/
+            /\ step_index = 26
+            /\ KeepVars(Can_decide)
+            /\ decision'[p4] /= 0
+            
+      \/  \* Infinite stuttering state to prevent deadlocks after trace runs
+            /\ step_index > 26
+            /\ UNCHANGED vars
+      
+
+
 \*----------------------------------------------------------------------------
 \* Next Action and Specification
 \*----------------------------------------------------------------------------
@@ -171,7 +328,7 @@ Done ==
     /\ \A p \in PROCS : p \in crashed \/ decision[p] /= 0
     /\ UNCHANGED vars
 
-Next ==
+Next_rules ==
     \/ Propose
     \/ Deliver_proposal_correct
     \/ Deliver_proposal_faulty
@@ -179,7 +336,11 @@ Next ==
     \/ Detect_crash
     \/ Can_decide
     \/ Deliver_decision
-    \/ Done
+    \*\/ Done
+    
+Next ==
+    /\ Next_rules
+    /\ Exec
     
 \* List explicit weak fairness variables on specific safe actions rather than globally
 Spec == Init /\ [][Next]_vars /\ WF_vars(Propose) 
@@ -278,5 +439,6 @@ PFD_Strong_completeness ==
 
  =============================================================================
 \* Modification History
-\* Last modified Tue May 05 12:02:07 CEST 2026 by floyd
+\* Last modified Mon May 11 08:30:21 CEST 2026 by floydpeiszan
+\* Last modified Tue May 05 14:26:40 CEST 2026 by floyd
 \* Created Fri Apr 24 09:04:30 CEST 2026 by floyd 
